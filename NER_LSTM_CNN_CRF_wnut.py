@@ -945,7 +945,7 @@ def adjust_learning_rate(optimizer, lr):
         param_group['lr'] = lr
 
 
-parameters['reload']=True
+parameters['reload']=False
 
 if not parameters['reload']:
     tr = time.time()

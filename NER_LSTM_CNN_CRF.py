@@ -10,8 +10,13 @@ from torch import autograd
 import time
 import _pickle as cPickle
 
+from pandas import DataFrame
+
 import urllib
 import matplotlib.pyplot as plt
+
+from confusion_matrix_pretty_print import pretty_plot_confusion_matrix
+
 plt.rcParams['figure.dpi'] = 80
 plt.style.use('seaborn-pastel')
 
@@ -23,55 +28,57 @@ import numpy as np
 
 torch.manual_seed(0)
 
-#parameters for the Model
+# parameters for the Model
 parameters = OrderedDict()
-parameters['train'] = "./data/eng.train" #Path to train file
-parameters['dev'] = "./data/eng.testa" #Path to test file
-parameters['test'] = "./data/eng.testb" #Path to dev file
-parameters['tag_scheme'] = "BIOES" #BIO or BIOES
-parameters['lower'] = True # Boolean variable to control lowercasing of words
-parameters['zeros'] =  True # Boolean variable to control replacement of  all digits by 0
-parameters['char_dim'] = 30 #Char embedding dimension
-parameters['word_dim'] = 100 #Token embedding dimension
-parameters['word_lstm_dim'] = 200 #Token LSTM hidden layer size
-parameters['word_bidirect'] = True #Use a bidirectional LSTM for words
-parameters['embedding_path'] = "./data/glove.6B.100d.txt" #Location of pretrained embeddings
-parameters['all_emb'] = 1 #Load all embeddings
-parameters['crf'] =1 #Use CRF (0 to disable)
-parameters['dropout'] = 0.5 #Droupout on the input (0 = no dropout)
-parameters['epoch'] =  60 #Number of epochs to run"
-parameters['weights'] = "" #path to Pretrained for from a previous run
-parameters['name'] = "self-trained-model" # Model name
-parameters['gradient_clip']=5.0
-parameters['char_mode']="CNN"
-models_path = "./models/" #path to saved models
+parameters['train'] = "./data/eng.train"  # Path to train file
+parameters['dev'] = "./data/eng.testa"  # Path to test file
+parameters['test'] = "./data/eng.testb"  # Path to dev file
+parameters['tag_scheme'] = "BIOES"  # BIO or BIOES
+parameters['lower'] = True  # Boolean variable to control lowercasing of words
+parameters['zeros'] = True  # Boolean variable to control replacement of  all digits by 0
+parameters['char_dim'] = 30  # Char embedding dimension
+parameters['word_dim'] = 100  # Token embedding dimension
+parameters['word_lstm_dim'] = 200  # Token LSTM hidden layer size
+parameters['word_bidirect'] = True  # Use a bidirectional LSTM for words
+parameters['embedding_path'] = "./data/glove.6B.100d.txt"  # Location of pretrained embeddings
+parameters['all_emb'] = 1  # Load all embeddings
+parameters['crf'] = 1  # Use CRF (0 to disable)
+parameters['dropout'] = 0.5  # Droupout on the input (0 = no dropout)
+parameters['epoch'] = 6  # Number of epochs to run"
+parameters['weights'] = ""  # path to Pretrained for from a previous run
+parameters['name'] = "self-trained-model"  # Model name
+parameters['gradient_clip'] = 5.0
+parameters['char_mode'] = "CNN"
+models_path = "./models/"  # path to saved models
 
-#GPU
-parameters['use_gpu'] = torch.cuda.is_available() #GPU Check
+# GPU
+parameters['use_gpu'] = torch.cuda.is_available()  # GPU Check
 use_gpu = parameters['use_gpu']
 
 parameters['reload'] = "./models/pre-trained-model"
 
-#Constants
+# Constants
 START_TAG = '<START>'
 STOP_TAG = '<STOP>'
 
-#paths to files
-#To stored mapping file
+# paths to files
+# To stored mapping file
 mapping_file = './data/mapping.pkl'
 
-#To stored model
+# To stored model
 name = parameters['name']
-model_name = models_path + name #get_name(parameters)
+model_name = models_path + name  # get_name(parameters)
 
 if not os.path.exists(models_path):
     os.makedirs(models_path)
+
 
 def zero_digits(s):
     """
     Replace every digit in a string by a zero.
     """
     return re.sub('\d', '0', s)
+
 
 def load_sentences(path, zeros):
     """
@@ -96,9 +103,11 @@ def load_sentences(path, zeros):
             sentences.append(sentence)
     return sentences
 
+
 train_sentences = load_sentences(parameters['train'], parameters['zeros'])
 test_sentences = load_sentences(parameters['test'], parameters['zeros'])
 dev_sentences = load_sentences(parameters['dev'], parameters['zeros'])
+
 
 def iob2(tags):
     """
@@ -121,6 +130,7 @@ def iob2(tags):
             tags[i] = 'B' + tag[1:]
     return True
 
+
 def iob_iobes(tags):
     """
     the function is used to convert
@@ -132,7 +142,7 @@ def iob_iobes(tags):
             new_tags.append(tag)
         elif tag.split('-')[0] == 'B':
             if i + 1 != len(tags) and \
-               tags[i + 1].split('-')[0] == 'I':
+                    tags[i + 1].split('-')[0] == 'I':
                 new_tags.append(tag)
             else:
                 new_tags.append(tag.replace('B-', 'S-'))
@@ -145,6 +155,7 @@ def iob_iobes(tags):
         else:
             raise Exception('Invalid IOB format!')
     return new_tags
+
 
 def update_tag_scheme(sentences, tag_scheme):
     """
@@ -165,9 +176,11 @@ def update_tag_scheme(sentences, tag_scheme):
         else:
             raise Exception('Wrong tagging scheme!')
 
+
 update_tag_scheme(train_sentences, parameters['tag_scheme'])
 update_tag_scheme(dev_sentences, parameters['tag_scheme'])
 update_tag_scheme(test_sentences, parameters['tag_scheme'])
+
 
 def create_dico(item_list):
     """
@@ -183,6 +196,7 @@ def create_dico(item_list):
                 dico[item] += 1
     return dico
 
+
 def create_mapping(dico):
     """
     Create a mapping (item to ID / ID to item) from a dictionary.
@@ -193,18 +207,20 @@ def create_mapping(dico):
     item_to_id = {v: k for k, v in id_to_item.items()}
     return item_to_id, id_to_item
 
+
 def word_mapping(sentences, lower):
     """
     Create a dictionary and a mapping of words, sorted by frequency.
     """
     words = [[x[0].lower() if lower else x[0] for x in s] for s in sentences]
     dico = create_dico(words)
-    dico['<UNK>'] = 10000000 #UNK tag for unknown words
+    dico['<UNK>'] = 10000000  # UNK tag for unknown words
     word_to_id, id_to_word = create_mapping(dico)
     print("Found %i unique words (%i in total)" % (
         len(dico), sum(len(x) for x in words)
     ))
     return dico, word_to_id, id_to_word
+
 
 def char_mapping(sentences):
     """
@@ -215,6 +231,7 @@ def char_mapping(sentences):
     char_to_id, id_to_char = create_mapping(dico)
     print("Found %i unique characters" % len(dico))
     return dico, char_to_id, id_to_char
+
 
 def tag_mapping(sentences):
     """
@@ -228,11 +245,13 @@ def tag_mapping(sentences):
     print("Found %i unique named entity tags" % len(dico))
     return dico, tag_to_id, id_to_tag
 
-dico_words,word_to_id,id_to_word = word_mapping(train_sentences, parameters['lower'])
+
+dico_words, word_to_id, id_to_word = word_mapping(train_sentences, parameters['lower'])
 dico_chars, char_to_id, id_to_char = char_mapping(train_sentences)
 dico_tags, tag_to_id, id_to_tag = tag_mapping(train_sentences)
 
-def lower_case(x,lower=False):
+
+def lower_case(x, lower=False):
     if lower:
         return x.lower()
     else:
@@ -249,7 +268,7 @@ def prepare_dataset(sentences, word_to_id, char_to_id, tag_to_id, lower=False):
     data = []
     for s in sentences:
         str_words = [w[0] for w in s]
-        words = [word_to_id[lower_case(w,lower) if lower_case(w,lower) in word_to_id else '<UNK>']
+        words = [word_to_id[lower_case(w, lower) if lower_case(w, lower) in word_to_id else '<UNK>']
                  for w in str_words]
         # Skip characters that are not in the training set
         chars = [[char_to_id[c] for c in w if c in char_to_id]
@@ -262,6 +281,7 @@ def prepare_dataset(sentences, word_to_id, char_to_id, tag_to_id, lower=False):
             'tags': tags,
         })
     return data
+
 
 train_data = prepare_dataset(
     train_sentences, word_to_id, char_to_id, tag_to_id, parameters['lower']
@@ -280,7 +300,7 @@ for i, line in enumerate(codecs.open(parameters['embedding_path'], 'r', 'utf-8')
     if len(s) == parameters['word_dim'] + 1:
         all_word_embeds[s[0]] = np.array([float(i) for i in s[1:]])
 
-#Intializing Word Embedding Matrix
+# Intializing Word Embedding Matrix
 word_embeds = np.random.uniform(-np.sqrt(0.06), np.sqrt(0.06), (len(word_to_id), parameters['word_dim']))
 
 for w in word_to_id:
@@ -303,12 +323,14 @@ with open(mapping_file, 'wb') as f:
 
 print('word_to_id: ', len(word_to_id))
 
+
 def init_embedding(input_embedding):
     """
     Initialize embedding
     """
     bias = np.sqrt(3.0 / input_embedding.size(1))
     nn.init.uniform(input_embedding, -bias, bias)
+
 
 def init_linear(input_linear):
     """
@@ -412,6 +434,7 @@ def to_scalar(var):
     Function to convert pytorch tensor to a scalar
     '''
     return var.view(-1).data.tolist()[0]
+
 
 def score_sentences(self, feats, tags):
     # tags is ground_truth, a list of ints, length is len(sentence)
@@ -610,14 +633,15 @@ def get_lstm_features(self, sentence, chars2, chars2_length, d):
 
     return lstm_feats
 
+
 def get_neg_log_likelihood(self, sentence, tags, chars2, chars2_length, d):
     # sentence, tags is a list of ints
     # features is a 2D tensor, len(sentence) * self.tagset_size
     feats = self._get_lstm_features(sentence, chars2, chars2_length, d)
 
     if self.use_crf:
-        forward_score = self._forward_alg(feats) #compute denominator
-        gold_score = self._score_sentence(feats, tags) #
+        forward_score = self._forward_alg(feats)  # compute denominator
+        gold_score = self._score_sentence(feats, tags)  #
         return forward_score - gold_score
     else:
         tags = Variable(tags)
@@ -725,7 +749,8 @@ class BiLSTM_CRF(nn.Module):
     neg_log_likelihood = get_neg_log_likelihood
     forward = forward_calc
 
-#creating the model using the Class defined above
+
+# creating the model using the Class defined above
 model = BiLSTM_CRF(vocab_size=len(word_to_id),
                    tag_to_ix=tag_to_id,
                    embedding_dim=parameters['word_dim'],
@@ -737,11 +762,11 @@ model = BiLSTM_CRF(vocab_size=len(word_to_id),
                    char_mode=parameters['char_mode'])
 print("Model Initialized!!!")
 
-#Reload a saved model, if parameter["reload"] is set to a path
+# Reload a saved model, if parameter["reload"] is set to a path
 if parameters['reload']:
     if not os.path.exists(parameters['reload']):
         print("downloading pre-trained model")
-        model_url="https://github.com/TheAnig/NER-LSTM-CNN-Pytorch/raw/master/trained-model-cpu"
+        model_url = "https://github.com/TheAnig/NER-LSTM-CNN-Pytorch/raw/master/trained-model-cpu"
         urllib.request.urlretrieve(model_url, parameters['reload'])
     model.load_state_dict(torch.load(parameters['reload']))
     print("model reloaded :", parameters['reload'])
@@ -749,10 +774,10 @@ if parameters['reload']:
 if use_gpu:
     model.cuda()
 
-#Initializing the optimizer
-#The best results in the paper where achived using stochastic gradient descent (SGD)
-#learning rate=0.015 and momentum=0.9
-#decay_rate=0.05
+# Initializing the optimizer
+# The best results in the paper where achived using stochastic gradient descent (SGD)
+# learning rate=0.015 and momentum=0.9
+# decay_rate=0.05
 
 learning_rate = 0.015
 momentum = 0.9
@@ -761,16 +786,16 @@ decay_rate = 0.05
 gradient_clip = parameters['gradient_clip']
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
 
-#variables which will used in training process
-losses = [] #list to store all losses
-loss = 0.0 #Loss Initializatoin
-best_dev_F = -1.0 # Current best F-1 Score on Dev Set
-best_test_F = -1.0 # Current best F-1 Score on Test Set
-best_train_F = -1.0 # Current best F-1 Score on Train Set
-all_F = [[0, 0, 0]] # List storing all the F-1 Scores
-eval_every = len(train_data) # Calculate F-1 Score after this many iterations
-plot_every = 2000 # Store loss after this many iterations
-count = 0 #Counts the number of iterations
+# variables which will used in training process
+losses = []  # list to store all losses
+loss = 0.0  # Loss Initializatoin
+best_dev_F = -1.0  # Current best F-1 Score on Dev Set
+best_test_F = -1.0  # Current best F-1 Score on Test Set
+best_train_F = -1.0  # Current best F-1 Score on Train Set
+all_F = [[0, 0, 0]]  # List storing all the F-1 Scores
+eval_every = len(train_data)  # Calculate F-1 Score after this many iterations
+plot_every = 2000  # Store loss after this many iterations
+count = 0  # Counts the number of iterations
 
 
 def get_chunk_type(tok, idx_to_tag):
@@ -850,7 +875,7 @@ def get_chunks(seq, tags):
     return chunks
 
 
-def evaluating(model, datas, best_F, dataset="Train"):
+def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False):
     '''
     The function takes as input the model, data and calcuates F-1 Score
     It performs conditional updates
@@ -863,7 +888,7 @@ def evaluating(model, datas, best_F, dataset="Train"):
     save = False  # Flag that tells us if the model needs to be saved
     new_F = 0.0  # Variable to store the current F1-Score (may not be the best)
     correct_preds, total_correct, total_preds = 0., 0., 0.  # Count variables
-
+    conf_matrix = np.zeros((tagset_size - 2, tagset_size - 2), dtype=int)
     for data in datas:
         ground_truth_id = data['tags']
         words = data['str_words']
@@ -910,6 +935,9 @@ def evaluating(model, datas, best_F, dataset="Train"):
         lab_pred_chunks = set(get_chunks(predicted_id,
                                          tag_to_id))
 
+        if con_mat:
+            np.add.at(conf_matrix, [ground_truth_id, predicted_id], 1)
+
         # Updating the count variables
         correct_preds += len(lab_chunks & lab_pred_chunks)
         total_preds += len(lab_pred_chunks)
@@ -929,7 +957,8 @@ def evaluating(model, datas, best_F, dataset="Train"):
         best_F = new_F
         save = True
 
-    return best_F, new_F, save
+    return best_F, new_F, save, conf_matrix
+
 
 def adjust_learning_rate(optimizer, lr):
     """
@@ -939,7 +968,7 @@ def adjust_learning_rate(optimizer, lr):
         param_group['lr'] = lr
 
 
-parameters['reload']=True
+parameters['reload'] = True
 
 if not parameters['reload']:
     tr = time.time()
@@ -1012,12 +1041,13 @@ if not parameters['reload']:
             if count % (eval_every) == 0 and count > (eval_every * 20) or \
                     count % (eval_every * 4) == 0 and count < (eval_every * 20):
                 model.train(False)
-                best_train_F, new_train_F, _ = evaluating(model, train_data, best_train_F, "Train")
-                best_dev_F, new_dev_F, save = evaluating(model, dev_data, best_dev_F, "Dev")
+                best_train_F, new_train_F, _ = evaluating(model, train_data, best_train_F, len(tag_to_id), "Train",
+                                                          False)
+                best_dev_F, new_dev_F, save = evaluating(model, dev_data, best_dev_F, len(tag_to_id), "Dev", False)
                 if save:
-                    print("Saving Model to ", model_name, "  EPOCH : ",epoch)
+                    print("Saving Model to ", model_name, "  EPOCH : ", epoch)
                     torch.save(model.state_dict(), model_name)
-                best_test_F, new_test_F, _ = evaluating(model, test_data, best_test_F, "Test")
+                best_test_F, new_test_F, _ = evaluating(model, test_data, best_test_F, len(tag_to_id), "Test", False)
 
                 all_F.append([new_train_F, new_dev_F, new_test_F])
                 model.train(True)
@@ -1028,15 +1058,23 @@ if not parameters['reload']:
 
     print(time.time() - tr)
     plt.plot(losses)
-    plt.show()
+    plt.savefig('results/conell_data_BiLSTM_CRF.png')
+    # plt.show()
 
-parameters['reload']=False
+parameters['reload'] = False
 
 if not parameters['reload']:
     # reload the best model saved from training
     model.load_state_dict(torch.load(model_name))
 
-model_testing_sentences = ['Will will go to Sasaram', 'Donald is the president of USA', 'I am abishek', 'Pune is very far from Bombay']
+_, _, _, conf_matrix = evaluating(model, test_data, 0, len(tag_to_id), "Test", True)
+list_of_labels = list(id_to_tag.values())[:-2]
+list_of_labels.append('Total')
+df_cm = DataFrame(conf_matrix)
+pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_conell_BiLSTM_CRF.png', cmap= 'Oranges' )
+
+model_testing_sentences = ['Will will go to Sasaram', 'Donald is the president of USA', 'I am abishek',
+                           'Pune is very far from Bombay']
 
 # parameters
 lower = parameters['lower']
@@ -1067,7 +1105,7 @@ for data in test_data:
     chars2 = data['chars']
     ground_truth = data['tags']
     d = {}
-    print('====================|- ',count+1, ' -|====================')
+    print('====================|- ', count + 1, ' -|====================')
 
     # Padding the each word to max word size of that sentence
     chars2_length = [len(c) for c in chars2]
@@ -1093,8 +1131,8 @@ for data in test_data:
     print("{:<20} {:<15} {:<15}".format('Word', 'Predicted Tag', 'Ground Truth'))
 
     for word, tag, gt in zip(words, temp_list_tags, ground_truth):
-        #print(word, '\t\t\t:', tag,' \t\t ',id_to_tag[gt])
-        print("{:<20} {:<15} {:<15}".format(word,tag,id_to_tag[gt]))
+        # print(word, '\t\t\t:', tag,' \t\t ',id_to_tag[gt])
+        print("{:<20} {:<15} {:<15}".format(word, tag, id_to_tag[gt]))
     count = count + 1
     if count > 10:
         break
