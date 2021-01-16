@@ -26,7 +26,8 @@ import codecs
 import re
 import numpy as np
 
-torch.manual_seed(0)
+# np.random.seed(40)
+# torch.manual_seed(40)
 
 # parameters for the Model
 parameters = OrderedDict()
@@ -44,11 +45,12 @@ parameters['embedding_path'] = "./data/glove.6B.100d.txt"  # Location of pretrai
 parameters['all_emb'] = 1  # Load all embeddings
 parameters['crf'] = 1  # Use CRF (0 to disable)
 parameters['dropout'] = 0.5  # Droupout on the input (0 = no dropout)
-parameters['epoch'] = 6  # Number of epochs to run"
+parameters['epoch'] = 50  # Number of epochs to run"
 parameters['weights'] = ""  # path to Pretrained for from a previous run
 parameters['name'] = "self-trained-model"  # Model name
 parameters['gradient_clip'] = 5.0
 parameters['char_mode'] = "CNN"
+parameters['to_train'] = False
 models_path = "./models/"  # path to saved models
 
 # GPU
@@ -82,7 +84,7 @@ def zero_digits(s):
 
 def load_sentences(path, zeros):
     """
-    Load sentences. A line must contain at least a word and its tag.
+    Load sentences. A line- must contain at least a word and its tag.
     Sentences are separated by empty lines.
     """
     sentences = []
@@ -763,13 +765,12 @@ model = BiLSTM_CRF(vocab_size=len(word_to_id),
 print("Model Initialized!!!")
 
 # Reload a saved model, if parameter["reload"] is set to a path
-if parameters['reload']:
-    if not os.path.exists(parameters['reload']):
-        print("downloading pre-trained model")
-        model_url = "https://github.com/TheAnig/NER-LSTM-CNN-Pytorch/raw/master/trained-model-cpu"
-        urllib.request.urlretrieve(model_url, parameters['reload'])
-    model.load_state_dict(torch.load(parameters['reload']))
-    print("model reloaded :", parameters['reload'])
+if parameters['to_train']:
+    if not os.path.exists(model_name):
+        print("Model not found!")
+    else:
+        model.load_state_dict(torch.load(model_name))
+        print("model reloaded :", model_name)
 
 if use_gpu:
     model.cuda()
@@ -968,9 +969,7 @@ def adjust_learning_rate(optimizer, lr):
         param_group['lr'] = lr
 
 
-parameters['reload'] = True
-
-if not parameters['reload']:
+if parameters['to_train']:
     tr = time.time()
     model.train(True)
     for epoch in range(1, number_of_epochs):
@@ -1031,7 +1030,7 @@ if not parameters['reload']:
             # Storing loss
             if count % plot_every == 0:
                 loss /= plot_every
-                print(count, ': ', loss)
+                print(count,'(',epoch,')', ': ', loss)
                 if losses == []:
                     losses.append(loss)
                 losses.append(loss)
@@ -1041,19 +1040,20 @@ if not parameters['reload']:
             if count % (eval_every) == 0 and count > (eval_every * 20) or \
                     count % (eval_every * 4) == 0 and count < (eval_every * 20):
                 model.train(False)
-                best_train_F, new_train_F, _ = evaluating(model, train_data, best_train_F, len(tag_to_id), "Train",
+                best_train_F, new_train_F, _ , _= evaluating(model, train_data, best_train_F, len(tag_to_id), "Train",
                                                           False)
-                best_dev_F, new_dev_F, save = evaluating(model, dev_data, best_dev_F, len(tag_to_id), "Dev", False)
+                best_dev_F, new_dev_F, save , _ = evaluating(model, dev_data, best_dev_F, len(tag_to_id), "Dev", False)
                 if save:
                     print("Saving Model to ", model_name, "  EPOCH : ", epoch)
                     torch.save(model.state_dict(), model_name)
-                best_test_F, new_test_F, _ = evaluating(model, test_data, best_test_F, len(tag_to_id), "Test", False)
+                best_test_F, new_test_F, _, _ = evaluating(model, test_data, best_test_F, len(tag_to_id), "Test", False)
 
                 all_F.append([new_train_F, new_dev_F, new_test_F])
                 model.train(True)
 
             # Performing decay on the learning rate
             if count % len(train_data) == 0:
+                print('Learning rate updated : ', learning_rate / (1 + decay_rate * count / len(train_data)))
                 adjust_learning_rate(optimizer, lr=learning_rate / (1 + decay_rate * count / len(train_data)))
 
     print(time.time() - tr)
@@ -1061,39 +1061,19 @@ if not parameters['reload']:
     plt.savefig('results/conell_data_BiLSTM_CRF.png')
     # plt.show()
 
-parameters['reload'] = False
-
-if not parameters['reload']:
+if not parameters['to_train']:
     # reload the best model saved from training
     model.load_state_dict(torch.load(model_name))
 
+model.train(False)
 _, _, _, conf_matrix = evaluating(model, test_data, 0, len(tag_to_id), "Test", True)
 list_of_labels = list(id_to_tag.values())[:-2]
 list_of_labels.append('Total')
 df_cm = DataFrame(conf_matrix)
 pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_conell_BiLSTM_CRF.png', cmap= 'Oranges' )
 
-model_testing_sentences = ['Will will go to Sasaram', 'Donald is the president of USA', 'I am abishek',
-                           'Pune is very far from Bombay']
-
 # parameters
 lower = parameters['lower']
-
-# preprocessing
-final_test_data = []
-for sentence in model_testing_sentences:
-    s = sentence.split()
-    str_words = [w for w in s]
-    words = [word_to_id[lower_case(w, lower) if lower_case(w, lower) in word_to_id else '<UNK>'] for w in str_words]
-
-    # Skip characters that are not in the training set
-    chars = [[char_to_id[c] for c in w if c in char_to_id] for w in str_words]
-
-    final_test_data.append({
-        'str_words': str_words,
-        'words': words,
-        'chars': chars,
-    })
 
 # prediction
 predictions = []
@@ -1123,16 +1103,11 @@ for data in test_data:
     else:
         val, predicted_id = model(dwords, chars2_mask, chars2_length, d)
 
-    pred_chunks = get_chunks(predicted_id, tag_to_id)
-    temp_list_tags = ['NA'] * len(words)
-    for p in pred_chunks:
-        temp_list_tags[p[1]] = p[0]
-
     print("{:<20} {:<15} {:<15}".format('Word', 'Predicted Tag', 'Ground Truth'))
 
-    for word, tag, gt in zip(words, temp_list_tags, ground_truth):
+    for word, tag, gt in zip(words, predicted_id, ground_truth):
         # print(word, '\t\t\t:', tag,' \t\t ',id_to_tag[gt])
-        print("{:<20} {:<15} {:<15}".format(word, tag, id_to_tag[gt]))
+        print("{:<20} {:<15} {:<15}".format(word, id_to_tag[tag], id_to_tag[gt]))
     count = count + 1
     if count > 10:
         break

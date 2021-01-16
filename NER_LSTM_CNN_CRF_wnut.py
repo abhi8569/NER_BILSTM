@@ -10,8 +10,13 @@ from torch import autograd
 import time
 import _pickle as cPickle
 
+from pandas import DataFrame
+
 import urllib
 import matplotlib.pyplot as plt
+
+from confusion_matrix_pretty_print import pretty_plot_confusion_matrix
+
 plt.rcParams['figure.dpi'] = 80
 plt.style.use('seaborn-pastel')
 
@@ -40,20 +45,20 @@ parameters['embedding_path'] = "./data/glove.6B.100d.txt" #Location of pretraine
 parameters['all_emb'] = 1 #Load all embeddings
 parameters['crf'] =1 #Use CRF (0 to disable)
 parameters['dropout'] = 0.5 #Droupout on the input (0 = no dropout)
-parameters['epoch'] = 60  #Number of epochs to run"
-''
+parameters['epoch'] = 50  #Number of epochs to run"
 parameters['weights'] = "" #path to Pretrained for from a previous run
 parameters['name'] = "self-trained-model_wnut" # Model name
-parameters['gradient_clip']=5.0
-parameters['char_mode']="CNN"
-models_path = "./models/" #path to saved models
+parameters['gradient_clip'] = 5.0
+parameters['char_mode'] = "CNN"
+parameters['to_train'] = False
+models_path = "./models/"  # path to saved models
 
 #GPU
 parameters['use_gpu'] = torch.cuda.is_available() #GPU Check
 use_gpu = parameters['use_gpu']
 
 parameters['reload'] = "./models/pre-trained-model"
-parameters['reload'] = False
+
 
 #Constants
 START_TAG = '<START>'
@@ -743,14 +748,13 @@ model = BiLSTM_CRF(vocab_size=len(word_to_id),
                    char_mode=parameters['char_mode'])
 print("Model Initialized!!!")
 
-#Reload a saved model, if parameter["reload"] is set to a path
-if parameters['reload']:
-    if not os.path.exists(parameters['reload']):
-        print("downloading pre-trained model")
-        model_url="https://github.com/TheAnig/NER-LSTM-CNN-Pytorch/raw/master/trained-model-cpu"
-        urllib.request.urlretrieve(model_url, parameters['reload'])
-    model.load_state_dict(torch.load(parameters['reload']))
-    print("model reloaded :", parameters['reload'])
+# Reload a saved model, if parameter["reload"] is set to a path
+if parameters['to_train']:
+    if not os.path.exists(model_name):
+        print("Model not found! Starting Training ...")
+    else:
+        model.load_state_dict(torch.load(model_name))
+        print("model reloaded :", model_name)
 
 if use_gpu:
     model.cuda()
@@ -856,7 +860,7 @@ def get_chunks(seq, tags):
     return chunks
 
 
-def evaluating(model, datas, best_F, dataset="Train"):
+def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False):
     '''
     The function takes as input the model, data and calcuates F-1 Score
     It performs conditional updates
@@ -869,7 +873,7 @@ def evaluating(model, datas, best_F, dataset="Train"):
     save = False  # Flag that tells us if the model needs to be saved
     new_F = 0.0  # Variable to store the current F1-Score (may not be the best)
     correct_preds, total_correct, total_preds = 0., 0., 0.  # Count variables
-
+    conf_matrix = np.zeros((tagset_size - 2, tagset_size - 2), dtype=int)
     for data in datas:
         ground_truth_id = data['tags']
         words = data['str_words']
@@ -916,6 +920,9 @@ def evaluating(model, datas, best_F, dataset="Train"):
         lab_pred_chunks = set(get_chunks(predicted_id,
                                          tag_to_id))
 
+        if con_mat:
+            np.add.at(conf_matrix, [ground_truth_id, predicted_id], 1)
+
         # Updating the count variables
         correct_preds += len(lab_chunks & lab_pred_chunks)
         total_preds += len(lab_pred_chunks)
@@ -935,7 +942,8 @@ def evaluating(model, datas, best_F, dataset="Train"):
         best_F = new_F
         save = True
 
-    return best_F, new_F, save
+    return best_F, new_F, save, conf_matrix
+
 
 def adjust_learning_rate(optimizer, lr):
     """
@@ -945,9 +953,7 @@ def adjust_learning_rate(optimizer, lr):
         param_group['lr'] = lr
 
 
-parameters['reload']=False
-
-if not parameters['reload']:
+if parameters['to_train']:
     tr = time.time()
     model.train(True)
     for epoch in range(1, number_of_epochs):
@@ -1008,7 +1014,7 @@ if not parameters['reload']:
             # Storing loss
             if count % plot_every == 0:
                 loss /= plot_every
-                print(count, ': ', loss)
+                print(count,'(',epoch,')', ': ', loss)
                 if losses == []:
                     losses.append(loss)
                 losses.append(loss)
@@ -1018,31 +1024,39 @@ if not parameters['reload']:
             if count % (eval_every) == 0 and count > (eval_every * 20) or \
                     count % (eval_every * 4) == 0 and count < (eval_every * 20):
                 model.train(False)
-                best_train_F, new_train_F, _ = evaluating(model, train_data, best_train_F, "Train")
-                best_dev_F, new_dev_F, save = evaluating(model, dev_data, best_dev_F, "Dev")
+                best_train_F, new_train_F, _ , _= evaluating(model, train_data, best_train_F, len(tag_to_id), "Train",
+                                                          False)
+                best_dev_F, new_dev_F, save , _ = evaluating(model, dev_data, best_dev_F, len(tag_to_id), "Dev", False)
                 if save:
-                    print("Saving Model to ", model_name, "  EPOCH : ",epoch)
+                    print("Saving Model to ", model_name, "  EPOCH : ", epoch)
                     torch.save(model.state_dict(), model_name)
-                best_test_F, new_test_F, _ = evaluating(model, test_data, best_test_F, "Test")
+                best_test_F, new_test_F, _, _ = evaluating(model, test_data, best_test_F, len(tag_to_id), "Test", False)
 
                 all_F.append([new_train_F, new_dev_F, new_test_F])
                 model.train(True)
 
             # Performing decay on the learning rate
             if count % len(train_data) == 0:
+                print('Learning rate updated : ', learning_rate / (1 + decay_rate * count / len(train_data)))
                 adjust_learning_rate(optimizer, lr=learning_rate / (1 + decay_rate * count / len(train_data)))
 
     print(time.time() - tr)
     plt.plot(losses)
-    plt.show()
+    plt.savefig('results/wnut_data_BiLSTM_CRF.png')
+    # plt.show()
 
-#parameters['reload'] = False
-
-if not parameters['reload']:
+if not parameters['to_train']:
     # reload the best model saved from training
     model.load_state_dict(torch.load(model_name))
 
-model_testing_sentences = ['Will will go to Java', 'Donald is the president of USA']
+_, _, _, conf_matrix = evaluating(model, train_data, 0, len(tag_to_id), "Train", True)
+list_of_labels = list(id_to_tag.values())[:-2]
+list_of_labels.append('Total')
+df_cm = DataFrame(conf_matrix)
+pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_wnut_BiLSTM_CRF_train.png', cmap= 'Oranges' )
+
+model_testing_sentences = ['Will will go to Sasaram', 'Donald is the president of USA', 'I am abishek',
+                           'Pune is very far from Bombay']
 
 # parameters
 lower = parameters['lower']
@@ -1091,16 +1105,12 @@ for data in test_data:
     else:
         val, predicted_id = model(dwords, chars2_mask, chars2_length, d)
 
-    pred_chunks = get_chunks(predicted_id, tag_to_id)
-    temp_list_tags = ['NA'] * len(words)
-    for p in pred_chunks:
-        temp_list_tags[p[1]] = p[0]
 
     print("{:<20} {:<15} {:<15}".format('Word', 'Predicted Tag', 'Ground Truth'))
 
-    for word, tag, gt in zip(words, temp_list_tags, ground_truth):
+    for word, tag, gt in zip(words, predicted_id, ground_truth):
         #print(word, '\t\t\t:', tag,' \t\t ',id_to_tag[gt])
-        print("{:<20} {:<15} {:<15}".format(word,tag,id_to_tag[gt]))
+        print("{:<20} {:<15} {:<15}".format(word,id_to_tag[tag],id_to_tag[gt]))
     count = count + 1
-    if count > 10:
+    if count > 100:
         break

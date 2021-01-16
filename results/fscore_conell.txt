@@ -1,0 +1,30 @@
+Found 17493 unique words (203621 in total)
+Found 75 unique characters
+Found 19 unique named entity tags
+14041 / 3250 / 3453 sentences in train / dev / test.
+
+Tags:
+['O'
+ 'S-LOC'
+ 'B-PER'
+ 'E-PER'
+ 'S-ORG'
+ 'S-MISC'
+ 'B-ORG'
+ 'E-ORG'
+ 'S-PER'
+ 'I-ORG'
+ 'B-LOC'
+ 'E-LOC'
+ 'B-MISC'
+ 'E-MISC'
+ 'I-MISC'
+ 'I-PER'
+ 'I-LOC'
+ '<START>'
+ '<STOP>']
+
+
+Train: new_F: 0.998507017020006 best_F: 0.9983150261277595 
+Dev: new_F: 0.9246876055386694 best_F: 0.9259259259259259 
+Test: new_F: 0.8689151908872476 best_F: 0.8739630719828739

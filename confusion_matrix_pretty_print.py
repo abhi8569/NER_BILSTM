@@ -71,7 +71,7 @@ def configcell_text_and_colors(array_df, lin, col, oText, facecolors, posi, fz, 
         text_kwargs = dict(color='w', ha="center", va="center", gid='sum', fontproperties=font_prop)
         lis_txt = ['%d'%(cell_val), per_ok_s, '%.2f%%'%(per_err)]
         lis_kwa = [text_kwargs]
-        dic = text_kwargs.copy(); dic['color'] = 'g'; lis_kwa.append(dic);
+        dic = text_kwargs.copy(); dic['color'] = 'y'; lis_kwa.append(dic);
         dic = text_kwargs.copy(); dic['color'] = 'r'; lis_kwa.append(dic);
         lis_pos = [(oText._x, oText._y-0.3), (oText._x, oText._y), (oText._x, oText._y+0.3)]
         for i in range(len(lis_txt)):
@@ -81,7 +81,7 @@ def configcell_text_and_colors(array_df, lin, col, oText, facecolors, posi, fz, 
         #print '\n'
 
         #set background color for sum cells (last line and last column)
-        carr = [0.27, 0.30, 0.27, 1.0]
+        carr = [0, 0, 0, 1.0]
         if(col == ccl - 1) and (lin == ccl - 1):
             carr = [0.17, 0.20, 0.17, 1.0]
         facecolors[posi] = carr
@@ -125,7 +125,7 @@ def insert_totals(df_cm):
 #
 
 def pretty_plot_confusion_matrix(df_cm, labels, path ,  annot=True, cmap="Oranges", fmt='.2f', fz=11,
-      lw=0.5, cbar=False, figsize=[15,15], show_null_values=0, pred_val_axis='x'):
+      lw=0.5, cbar=False, figsize=[30,30], show_null_values=0, pred_val_axis='x'):
     """
       print conf matrix with default layout (like matlab)
       params:
@@ -200,7 +200,7 @@ def pretty_plot_confusion_matrix(df_cm, labels, path ,  annot=True, cmap="Orange
     ax.set_xlabel(xlbl)
     ax.set_ylabel(ylbl)
     plt.tight_layout()  #set layout slim
-    plt.savefig('results/conf_matrix_conell_BiLSTM_CRF.png', format='png')
+    plt.savefig(path, format='png')
     #plt.show()
 #
 
