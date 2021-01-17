@@ -14,7 +14,7 @@ from pandas import DataFrame
 
 import urllib
 import matplotlib.pyplot as plt
-
+from sklearn import metrics
 from confusion_matrix_pretty_print import pretty_plot_confusion_matrix
 
 plt.rcParams['figure.dpi'] = 80
@@ -84,7 +84,7 @@ def zero_digits(s):
 
 def load_sentences(path, zeros):
     """
-    Load sentences. A line- must contain at least a word and its tag.
+    Load sentences. A line must contain at least a word and its tag.
     Sentences are separated by empty lines.
     """
     sentences = []
@@ -767,7 +767,7 @@ print("Model Initialized!!!")
 # Reload a saved model, if parameter["reload"] is set to a path
 if parameters['to_train']:
     if not os.path.exists(model_name):
-        print("Model not found!")
+        print("Model not found! Starting Training ...")
     else:
         model.load_state_dict(torch.load(model_name))
         print("model reloaded :", model_name)
@@ -775,10 +775,10 @@ if parameters['to_train']:
 if use_gpu:
     model.cuda()
 
-# Initializing the optimizer
-# The best results in the paper where achived using stochastic gradient descent (SGD)
-# learning rate=0.015 and momentum=0.9
-# decay_rate=0.05
+#Initializing the optimizer
+#The best results in the paper where achived using stochastic gradient descent (SGD)
+#learning rate=0.015 and momentum=0.9
+#decay_rate=0.05
 
 learning_rate = 0.015
 momentum = 0.9
@@ -799,83 +799,6 @@ plot_every = 2000  # Store loss after this many iterations
 count = 0  # Counts the number of iterations
 
 
-def get_chunk_type(tok, idx_to_tag):
-    """
-    The function takes in a chunk ("B-PER") and then splits it into the tag (PER) and its class (B)
-    as defined in BIOES
-
-    Args:
-        tok: id of token, ex 4
-        idx_to_tag: dictionary {4: "B-PER", ...}
-
-    Returns:
-        tuple: "B", "PER"
-
-    """
-
-    tag_name = idx_to_tag[tok]
-    tag_class = tag_name.split('-')[0]
-    tag_type = tag_name.split('-')[-1]
-    return tag_class, tag_type
-
-
-def get_chunks(seq, tags):
-    """Given a sequence of tags, group entities and their position
-
-    Args:
-        seq: [4, 4, 0, 0, ...] sequence of labels
-        tags: dict["O"] = 4
-
-    Returns:
-        list of (chunk_type, chunk_start, chunk_end)
-
-    Example:
-        seq = [4, 5, 0, 3]
-        tags = {"B-PER": 4, "I-PER": 5, "B-LOC": 3}
-        result = [("PER", 0, 2), ("LOC", 3, 4)]
-
-    """
-
-    # We assume by default the tags lie outside a named entity
-    default = tags["O"]
-
-    idx_to_tag = {idx: tag for tag, idx in tags.items()}
-
-    chunks = []
-
-    chunk_type, chunk_start = None, None
-    for i, tok in enumerate(seq):
-        # End of a chunk 1
-        if tok == default and chunk_type is not None:
-            # Add a chunk.
-            chunk = (chunk_type, chunk_start, i)
-            chunks.append(chunk)
-            chunk_type, chunk_start = None, None
-
-        # End of a chunk + start of a chunk!
-        elif tok != default:
-            tok_chunk_class, tok_chunk_type = get_chunk_type(tok, idx_to_tag)
-            if chunk_type is None:
-                # Initialize chunk for each entity
-                chunk_type, chunk_start = tok_chunk_type, i
-            elif tok_chunk_type != chunk_type or tok_chunk_class == "B":
-                # If chunk class is B, i.e., its a beginning of a new named entity
-                # or, if the chunk type is different from the previous one, then we
-                # start labelling it as a new entity
-                chunk = (chunk_type, chunk_start, i)
-                chunks.append(chunk)
-                chunk_type, chunk_start = tok_chunk_type, i
-        else:
-            pass
-
-    # end condition
-    if chunk_type is not None:
-        chunk = (chunk_type, chunk_start, len(seq))
-        chunks.append(chunk)
-
-    return chunks
-
-
 def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False):
     '''
     The function takes as input the model, data and calcuates F-1 Score
@@ -890,6 +813,10 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
     new_F = 0.0  # Variable to store the current F1-Score (may not be the best)
     correct_preds, total_correct, total_preds = 0., 0., 0.  # Count variables
     conf_matrix = np.zeros((tagset_size - 2, tagset_size - 2), dtype=int)
+
+    total_prediction_list = []
+    total_ground_truth_list = []
+
     for data in datas:
         ground_truth_id = data['tags']
         words = data['str_words']
@@ -930,24 +857,13 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
             val, out = model(dwords, chars2_mask, chars2_length, d)
         predicted_id = out
 
-        # We use the get chunks function defined above to get the true chunks
-        # and the predicted chunks from true labels and predicted labels respectively
-        lab_chunks = set(get_chunks(ground_truth_id, tag_to_id))
-        lab_pred_chunks = set(get_chunks(predicted_id,
-                                         tag_to_id))
+        total_prediction_list.extend(predicted_id)
+        total_ground_truth_list.extend(ground_truth_id)
 
         if con_mat:
             np.add.at(conf_matrix, [ground_truth_id, predicted_id], 1)
 
-        # Updating the count variables
-        correct_preds += len(lab_chunks & lab_pred_chunks)
-        total_preds += len(lab_pred_chunks)
-        total_correct += len(lab_chunks)
-
-    # Calculating the F1-Score
-    p = correct_preds / total_preds if correct_preds > 0 else 0
-    r = correct_preds / total_correct if correct_preds > 0 else 0
-    new_F = 2 * p * r / (p + r) if correct_preds > 0 else 0
+    new_F = metrics.f1_score(total_ground_truth_list,total_prediction_list, average='micro')
 
     print("{}: new_F: {} best_F: {} ".format(dataset, new_F, best_F))
 

@@ -14,7 +14,7 @@ from pandas import DataFrame
 
 import urllib
 import matplotlib.pyplot as plt
-
+from sklearn import metrics
 from confusion_matrix_pretty_print import pretty_plot_confusion_matrix
 
 plt.rcParams['figure.dpi'] = 80
@@ -26,10 +26,10 @@ import codecs
 import re
 import numpy as np
 
-np.random.seed(40)
-torch.manual_seed(40)
+# np.random.seed(40)
+# torch.manual_seed(40)
 
-#parameters for the Model
+# parameters for the Model
 parameters = OrderedDict()
 parameters['train'] = "./data/w-nut/wnut17train.conll" #Path to train file
 parameters['dev'] = "./data/w-nut/emerging.dev.conll" #Path to test file
@@ -53,14 +53,13 @@ parameters['char_mode'] = "CNN"
 parameters['to_train'] = False
 models_path = "./models/"  # path to saved models
 
-#GPU
-parameters['use_gpu'] = torch.cuda.is_available() #GPU Check
+# GPU
+parameters['use_gpu'] = torch.cuda.is_available()  # GPU Check
 use_gpu = parameters['use_gpu']
 
 parameters['reload'] = "./models/pre-trained-model"
 
-
-#Constants
+# Constants
 START_TAG = '<START>'
 STOP_TAG = '<STOP>'
 
@@ -70,17 +69,18 @@ mapping_file = './data/mapping_wnut.pkl'
 
 #To stored model
 name = parameters['name']
-model_name = models_path + name #get_name(parameters)
-print(model_name)
+model_name = models_path + name  # get_name(parameters)
 
 if not os.path.exists(models_path):
     os.makedirs(models_path)
+
 
 def zero_digits(s):
     """
     Replace every digit in a string by a zero.
     """
     return re.sub('\d', '0', s)
+
 
 def load_sentences(path, zeros):
     """
@@ -105,9 +105,11 @@ def load_sentences(path, zeros):
             sentences.append(sentence)
     return sentences
 
+
 train_sentences = load_sentences(parameters['train'], parameters['zeros'])
 test_sentences = load_sentences(parameters['test'], parameters['zeros'])
 dev_sentences = load_sentences(parameters['dev'], parameters['zeros'])
+
 
 def iob2(tags):
     """
@@ -129,6 +131,7 @@ def iob2(tags):
         else:  # conversion IOB1 to IOB2
             tags[i] = 'B' + tag[1:]
     return True
+
 
 def iob_iobes(tags):
     """
@@ -155,6 +158,7 @@ def iob_iobes(tags):
             raise Exception('Invalid IOB format!')
     return new_tags
 
+
 def update_tag_scheme(sentences, tag_scheme):
     """
     Check and update sentences tagging scheme to BIO2
@@ -174,9 +178,11 @@ def update_tag_scheme(sentences, tag_scheme):
         else:
             raise Exception('Wrong tagging scheme!')
 
+
 update_tag_scheme(train_sentences, parameters['tag_scheme'])
 update_tag_scheme(dev_sentences, parameters['tag_scheme'])
 update_tag_scheme(test_sentences, parameters['tag_scheme'])
+
 
 def create_dico(item_list):
     """
@@ -192,6 +198,7 @@ def create_dico(item_list):
                 dico[item] += 1
     return dico
 
+
 def create_mapping(dico):
     """
     Create a mapping (item to ID / ID to item) from a dictionary.
@@ -202,18 +209,20 @@ def create_mapping(dico):
     item_to_id = {v: k for k, v in id_to_item.items()}
     return item_to_id, id_to_item
 
+
 def word_mapping(sentences, lower):
     """
     Create a dictionary and a mapping of words, sorted by frequency.
     """
     words = [[x[0].lower() if lower else x[0] for x in s] for s in sentences]
     dico = create_dico(words)
-    dico['<UNK>'] = 10000000 #UNK tag for unknown words
+    dico['<UNK>'] = 10000000  # UNK tag for unknown words
     word_to_id, id_to_word = create_mapping(dico)
     print("Found %i unique words (%i in total)" % (
         len(dico), sum(len(x) for x in words)
     ))
     return dico, word_to_id, id_to_word
+
 
 def char_mapping(sentences):
     """
@@ -224,6 +233,7 @@ def char_mapping(sentences):
     char_to_id, id_to_char = create_mapping(dico)
     print("Found %i unique characters" % len(dico))
     return dico, char_to_id, id_to_char
+
 
 def tag_mapping(sentences):
     """
@@ -272,6 +282,7 @@ def prepare_dataset(sentences, word_to_id, char_to_id, tag_to_id, lower=False):
         })
     return data
 
+
 train_data = prepare_dataset(
     train_sentences, word_to_id, char_to_id, tag_to_id, parameters['lower']
 )
@@ -312,12 +323,14 @@ with open(mapping_file, 'wb') as f:
 
 print('word_to_id: ', len(word_to_id))
 
+
 def init_embedding(input_embedding):
     """
     Initialize embedding
     """
     bias = np.sqrt(3.0 / input_embedding.size(1))
     nn.init.uniform(input_embedding, -bias, bias)
+
 
 def init_linear(input_linear):
     """
@@ -621,6 +634,7 @@ def get_lstm_features(self, sentence, chars2, chars2_length, d):
 
     return lstm_feats
 
+
 def get_neg_log_likelihood(self, sentence, tags, chars2, chars2_length, d):
     # sentence, tags is a list of ints
     # features is a 2D tensor, len(sentence) * self.tagset_size
@@ -771,93 +785,16 @@ decay_rate = 0.05
 gradient_clip = parameters['gradient_clip']
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
 
-#variables which will used in training process
-losses = [] #list to store all losses
-loss = 0.0 #Loss Initializatoin
-best_dev_F = -1.0 # Current best F-1 Score on Dev Set
-best_test_F = -1.0 # Current best F-1 Score on Test Set
-best_train_F = -1.0 # Current best F-1 Score on Train Set
-all_F = [[0, 0, 0]] # List storing all the F-1 Scores
-eval_every = len(train_data) # Calculate F-1 Score after this many iterations
-plot_every = 2000 # Store loss after this many iterations
-count = 0 #Counts the number of iterations
-
-
-def get_chunk_type(tok, idx_to_tag):
-    """
-    The function takes in a chunk ("B-PER") and then splits it into the tag (PER) and its class (B)
-    as defined in BIOES
-
-    Args:
-        tok: id of token, ex 4
-        idx_to_tag: dictionary {4: "B-PER", ...}
-
-    Returns:
-        tuple: "B", "PER"
-
-    """
-
-    tag_name = idx_to_tag[tok]
-    tag_class = tag_name.split('-')[0]
-    tag_type = tag_name.split('-')[-1]
-    return tag_class, tag_type
-
-
-def get_chunks(seq, tags):
-    """Given a sequence of tags, group entities and their position
-
-    Args:
-        seq: [4, 4, 0, 0, ...] sequence of labels
-        tags: dict["O"] = 4
-
-    Returns:
-        list of (chunk_type, chunk_start, chunk_end)
-
-    Example:
-        seq = [4, 5, 0, 3]
-        tags = {"B-PER": 4, "I-PER": 5, "B-LOC": 3}
-        result = [("PER", 0, 2), ("LOC", 3, 4)]
-
-    """
-
-    # We assume by default the tags lie outside a named entity
-    default = tags["O"]
-
-    idx_to_tag = {idx: tag for tag, idx in tags.items()}
-
-    chunks = []
-
-    chunk_type, chunk_start = None, None
-    for i, tok in enumerate(seq):
-        # End of a chunk 1
-        if tok == default and chunk_type is not None:
-            # Add a chunk.
-            chunk = (chunk_type, chunk_start, i)
-            chunks.append(chunk)
-            chunk_type, chunk_start = None, None
-
-        # End of a chunk + start of a chunk!
-        elif tok != default:
-            tok_chunk_class, tok_chunk_type = get_chunk_type(tok, idx_to_tag)
-            if chunk_type is None:
-                # Initialize chunk for each entity
-                chunk_type, chunk_start = tok_chunk_type, i
-            elif tok_chunk_type != chunk_type or tok_chunk_class == "B":
-                # If chunk class is B, i.e., its a beginning of a new named entity
-                # or, if the chunk type is different from the previous one, then we
-                # start labelling it as a new entity
-                chunk = (chunk_type, chunk_start, i)
-                chunks.append(chunk)
-                chunk_type, chunk_start = tok_chunk_type, i
-        else:
-            pass
-
-    # end condition
-    if chunk_type is not None:
-        chunk = (chunk_type, chunk_start, len(seq))
-        chunks.append(chunk)
-
-    return chunks
+# variables which will used in training process
+losses = []  # list to store all losses
+loss = 0.0  # Loss Initializatoin
+best_dev_F = -1.0  # Current best F-1 Score on Dev Set
+best_test_F = -1.0  # Current best F-1 Score on Test Set
+best_train_F = -1.0  # Current best F-1 Score on Train Set
+all_F = [[0, 0, 0]]  # List storing all the F-1 Scores
+eval_every = len(train_data)  # Calculate F-1 Score after this many iterations
+plot_every = 2000  # Store loss after this many iterations
+count = 0  # Counts the number of iterations
 
 
 def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False):
@@ -874,6 +811,10 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
     new_F = 0.0  # Variable to store the current F1-Score (may not be the best)
     correct_preds, total_correct, total_preds = 0., 0., 0.  # Count variables
     conf_matrix = np.zeros((tagset_size - 2, tagset_size - 2), dtype=int)
+
+    total_prediction_list = []
+    total_ground_truth_list = []
+
     for data in datas:
         ground_truth_id = data['tags']
         words = data['str_words']
@@ -914,24 +855,13 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
             val, out = model(dwords, chars2_mask, chars2_length, d)
         predicted_id = out
 
-        # We use the get chunks function defined above to get the true chunks
-        # and the predicted chunks from true labels and predicted labels respectively
-        lab_chunks = set(get_chunks(ground_truth_id, tag_to_id))
-        lab_pred_chunks = set(get_chunks(predicted_id,
-                                         tag_to_id))
+        total_prediction_list.extend(predicted_id)
+        total_ground_truth_list.extend(ground_truth_id)
 
         if con_mat:
             np.add.at(conf_matrix, [ground_truth_id, predicted_id], 1)
 
-        # Updating the count variables
-        correct_preds += len(lab_chunks & lab_pred_chunks)
-        total_preds += len(lab_pred_chunks)
-        total_correct += len(lab_chunks)
-
-    # Calculating the F1-Score
-    p = correct_preds / total_preds if correct_preds > 0 else 0
-    r = correct_preds / total_correct if correct_preds > 0 else 0
-    new_F = 2 * p * r / (p + r) if correct_preds > 0 else 0
+    new_F = metrics.f1_score(total_ground_truth_list,total_prediction_list, average='micro')
 
     print("{}: new_F: {} best_F: {} ".format(dataset, new_F, best_F))
 
@@ -1049,33 +979,15 @@ if not parameters['to_train']:
     # reload the best model saved from training
     model.load_state_dict(torch.load(model_name))
 
-_, _, _, conf_matrix = evaluating(model, train_data, 0, len(tag_to_id), "Train", True)
+model.train(False)
+_, _, _, conf_matrix = evaluating(model, test_data, 0, len(tag_to_id), "Test", True)
 list_of_labels = list(id_to_tag.values())[:-2]
 list_of_labels.append('Total')
 df_cm = DataFrame(conf_matrix)
-pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_wnut_BiLSTM_CRF_train.png', cmap= 'Oranges' )
-
-model_testing_sentences = ['Will will go to Sasaram', 'Donald is the president of USA', 'I am abishek',
-                           'Pune is very far from Bombay']
+pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_wnut_BiLSTM_CRF_test.png', cmap= 'Oranges' )
 
 # parameters
 lower = parameters['lower']
-
-# preprocessing
-final_test_data = []
-for sentence in model_testing_sentences:
-    s = sentence.split()
-    str_words = [w for w in s]
-    words = [word_to_id[lower_case(w, lower) if lower_case(w, lower) in word_to_id else '<UNK>'] for w in str_words]
-
-    # Skip characters that are not in the training set
-    chars = [[char_to_id[c] for c in w if c in char_to_id] for w in str_words]
-
-    final_test_data.append({
-        'str_words': str_words,
-        'words': words,
-        'chars': chars,
-    })
 
 # prediction
 predictions = []
@@ -1112,5 +1024,5 @@ for data in test_data:
         #print(word, '\t\t\t:', tag,' \t\t ',id_to_tag[gt])
         print("{:<20} {:<15} {:<15}".format(word,id_to_tag[tag],id_to_tag[gt]))
     count = count + 1
-    if count > 100:
+    if count > 10:
         break
