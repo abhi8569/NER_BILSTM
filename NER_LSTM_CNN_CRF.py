@@ -50,7 +50,7 @@ parameters['weights'] = ""  # path to Pretrained for from a previous run
 parameters['name'] = "self-trained-model"  # Model name
 parameters['gradient_clip'] = 5.0
 parameters['char_mode'] = "CNN"
-parameters['to_train'] = False
+parameters['to_train'] = True
 models_path = "./models/"  # path to saved models
 
 # GPU
@@ -863,7 +863,7 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
         if con_mat:
             np.add.at(conf_matrix, [ground_truth_id, predicted_id], 1)
 
-    new_F = metrics.f1_score(total_ground_truth_list,total_prediction_list, average='micro')
+    new_F = metrics.f1_score(total_ground_truth_list,total_prediction_list, average='macro')
 
     print("{}: new_F: {} best_F: {} ".format(dataset, new_F, best_F))
 
@@ -974,7 +974,7 @@ if parameters['to_train']:
 
     print(time.time() - tr)
     plt.plot(losses)
-    plt.savefig('results/conell_data_BiLSTM_CRF.png')
+    plt.savefig('results/conell_data_loss_curve.png')
     # plt.show()
 
 if not parameters['to_train']:
@@ -986,7 +986,7 @@ _, _, _, conf_matrix = evaluating(model, test_data, 0, len(tag_to_id), "Test", T
 list_of_labels = list(id_to_tag.values())[:-2]
 list_of_labels.append('Total')
 df_cm = DataFrame(conf_matrix)
-pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_conell_BiLSTM_CRF.png', cmap= 'Oranges' )
+pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conell_conf_matrix.png', cmap= 'Oranges' )
 
 # parameters
 lower = parameters['lower']

@@ -45,12 +45,12 @@ parameters['embedding_path'] = "./data/glove.6B.100d.txt" #Location of pretraine
 parameters['all_emb'] = 1 #Load all embeddings
 parameters['crf'] =1 #Use CRF (0 to disable)
 parameters['dropout'] = 0.5 #Droupout on the input (0 = no dropout)
-parameters['epoch'] = 50  #Number of epochs to run"
+parameters['epoch'] = 100  #Number of epochs to run"
 parameters['weights'] = "" #path to Pretrained for from a previous run
 parameters['name'] = "self-trained-model_wnut" # Model name
 parameters['gradient_clip'] = 5.0
 parameters['char_mode'] = "CNN"
-parameters['to_train'] = False
+parameters['to_train'] = True
 models_path = "./models/"  # path to saved models
 
 # GPU
@@ -704,6 +704,7 @@ class BiLSTM_CRF(nn.Module):
 
         # Creating Embedding layer with dimension of ( number of words * dimension of each word)
         self.word_embeds = nn.Embedding(vocab_size, embedding_dim)
+        init_embedding(self.word_embeds.weight)
         if pre_word_embeds is not None:
             # Initializes the word embeddings with pretrained word embeddings
             self.pre_word_embeds = True
@@ -861,7 +862,7 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
         if con_mat:
             np.add.at(conf_matrix, [ground_truth_id, predicted_id], 1)
 
-    new_F = metrics.f1_score(total_ground_truth_list,total_prediction_list, average='micro')
+    new_F = metrics.f1_score(total_ground_truth_list,total_prediction_list, average='macro')
 
     print("{}: new_F: {} best_F: {} ".format(dataset, new_F, best_F))
 
@@ -972,7 +973,7 @@ if parameters['to_train']:
 
     print(time.time() - tr)
     plt.plot(losses)
-    plt.savefig('results/wnut_data_BiLSTM_CRF.png')
+    plt.savefig('results/wnut_data_BiLSTM_CRF_pre_trained_embeddings.png')
     # plt.show()
 
 if not parameters['to_train']:
@@ -984,7 +985,7 @@ _, _, _, conf_matrix = evaluating(model, test_data, 0, len(tag_to_id), "Test", T
 list_of_labels = list(id_to_tag.values())[:-2]
 list_of_labels.append('Total')
 df_cm = DataFrame(conf_matrix)
-pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_wnut_BiLSTM_CRF_test.png', cmap= 'Oranges' )
+pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_wnut_BiLSTM_CRF_pre_trained_embeddings.png', cmap= 'Oranges' )
 
 # parameters
 lower = parameters['lower']
