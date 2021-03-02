@@ -31,9 +31,9 @@ Found 27 unique named entity tags
  '<START>'
  '<STOP>']
 
-After 100 epoch training
+After 50 epoch training
 
-Train: new_F: 0.9931099106431555 best_F: 0.9942060439500385 
-Dev: new_F: 0.18468906683509442 best_F: 0.19526579402939562 
-Test: new_F: 0.13365013509757898 best_F: 0.15604063220158415 
-Learning rate updated :  0.0025210084033613443
+Train: new_F: 0.9906634490993084 best_F: 0.9910326590455554 
+Dev: new_F: 0.20522434437766257 best_F: 0.20727630735799374 
+Test: new_F: 0.14841409298640554 best_F: 0.16179700638710018 
+Learning rate updated :  0.004347826086956521

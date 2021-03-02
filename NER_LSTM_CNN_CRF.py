@@ -789,6 +789,7 @@ optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momen
 
 # variables which will used in training process
 losses = []  # list to store all losses
+val_losses = []
 loss = 0.0  # Loss Initializatoin
 best_dev_F = -1.0  # Current best F-1 Score on Dev Set
 best_test_F = -1.0  # Current best F-1 Score on Test Set
@@ -876,6 +877,57 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
 
     return best_F, new_F, save, conf_matrix
 
+def eval_loss(model, datas):
+    count_val = 0
+    loss_val = 0
+    for i, index in enumerate(np.random.permutation(len(datas))):
+        count_val += 1
+        data = datas[index]
+
+        sentence_in = data['words']
+        sentence_in = Variable(torch.LongTensor(sentence_in))
+        tags = data['tags']
+        chars2 = data['chars']
+
+        if parameters['char_mode'] == 'LSTM':
+            chars2_sorted = sorted(chars2, key=lambda p: len(p), reverse=True)
+            d = {}
+            for i, ci in enumerate(chars2):
+                for j, cj in enumerate(chars2_sorted):
+                    if ci == cj and not j in d and not i in d.values():
+                        d[j] = i
+                        continue
+            chars2_length = [len(c) for c in chars2_sorted]
+            char_maxl = max(chars2_length)
+            chars2_mask = np.zeros((len(chars2_sorted), char_maxl), dtype='int')
+            for i, c in enumerate(chars2_sorted):
+                chars2_mask[i, :chars2_length[i]] = c
+            chars2_mask = Variable(torch.LongTensor(chars2_mask))
+
+        if parameters['char_mode'] == 'CNN':
+
+            d = {}
+
+            ## Padding the each word to max word size of that sentence
+            chars2_length = [len(c) for c in chars2]
+            char_maxl = max(chars2_length)
+            chars2_mask = np.zeros((len(chars2_length), char_maxl), dtype='int')
+            for i, c in enumerate(chars2):
+                chars2_mask[i, :chars2_length[i]] = c
+            chars2_mask = Variable(torch.LongTensor(chars2_mask))
+
+        targets = torch.LongTensor(tags)
+
+        # we calculate the negative log-likelihood for the predicted tags using the predefined function
+        if use_gpu:
+            neg_log_likelihood = model.neg_log_likelihood(sentence_in.cuda(), targets.cuda(), chars2_mask.cuda(),
+                                                          chars2_length, d)
+        else:
+            neg_log_likelihood = model.neg_log_likelihood(sentence_in, targets, chars2_mask, chars2_length, d)
+        loss_val += neg_log_likelihood.item() / len(data['words'])
+    loss_val /= len(datas)
+    return loss_val
+
 
 def adjust_learning_rate(optimizer, lr):
     """
@@ -883,6 +935,8 @@ def adjust_learning_rate(optimizer, lr):
     """
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+
 
 
 if parameters['to_train']:
@@ -951,6 +1005,9 @@ if parameters['to_train']:
                     losses.append(loss)
                 losses.append(loss)
                 loss = 0.0
+                model.train(False)
+                val_losses.append(eval_loss(model,dev_data))
+                model.train(True)
 
             # Evaluating on Train, Test, Dev Sets
             if count % (eval_every) == 0 and count > (eval_every * 20) or \
@@ -973,8 +1030,11 @@ if parameters['to_train']:
                 adjust_learning_rate(optimizer, lr=learning_rate / (1 + decay_rate * count / len(train_data)))
 
     print(time.time() - tr)
-    plt.plot(losses)
-    plt.savefig('results/conell_data_loss_curve.png')
+    plt.plot(losses,'-r' , label='Training Loss')
+    plt.plot(val_losses,'-b', label='Validation Loss')
+    plt.legend(loc="upper right")
+    plt.title('Wnut Loss BiLSTM-CRF')
+    plt.savefig('results/conell_loss_curve.png')
     # plt.show()
 
 if not parameters['to_train']:

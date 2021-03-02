@@ -45,7 +45,7 @@ parameters['embedding_path'] = "./data/glove.6B.100d.txt" #Location of pretraine
 parameters['all_emb'] = 1 #Load all embeddings
 parameters['crf'] =1 #Use CRF (0 to disable)
 parameters['dropout'] = 0.5 #Droupout on the input (0 = no dropout)
-parameters['epoch'] = 100  #Number of epochs to run"
+parameters['epoch'] = 50  #Number of epochs to run"
 parameters['weights'] = "" #path to Pretrained for from a previous run
 parameters['name'] = "self-trained-model_wnut" # Model name
 parameters['gradient_clip'] = 5.0
@@ -183,6 +183,11 @@ update_tag_scheme(train_sentences, parameters['tag_scheme'])
 update_tag_scheme(dev_sentences, parameters['tag_scheme'])
 update_tag_scheme(test_sentences, parameters['tag_scheme'])
 
+# for i in range(500):
+#     train_sentences.append(test_sentences.pop(i))
+#     train_sentences.append(dev_sentences.pop(i))
+#
+# print('d')
 
 def create_dico(item_list):
     """
@@ -451,7 +456,6 @@ def score_sentences(self, feats, tags):
 
     return score
 
-
 def forward_alg(self, feats):
     '''
     This function performs the forward algorithm explained above
@@ -549,7 +553,6 @@ def viterbi_algo(self, feats):
     best_path.reverse()
     return path_score, best_path
 
-
 def forward_calc(self, sentence, chars, chars2_length, d):
     '''
     The function calls viterbi decode and generates the
@@ -621,7 +624,7 @@ def get_lstm_features(self, sentence, chars2, chars2_length, d):
 
     ## Word lstm
     ## Takes words as input and generates a output at each step
-    lstm_out, _ = self.lstm(embeds)
+    lstm_out, hidden_cell = self.lstm(embeds)
 
     ## Reshaping the outputs from the lstm layer
     lstm_out = lstm_out.view(len(sentence), self.hidden_dim * 2)
@@ -629,8 +632,10 @@ def get_lstm_features(self, sentence, chars2, chars2_length, d):
     ## Dropout on the lstm output
     lstm_out = self.dropout(lstm_out)
 
+    attn_out, attn_out_weight = self.multihead_attn(lstm_out.unsqueeze(1), lstm_out.unsqueeze(1), lstm_out.unsqueeze(1))
+
     ## Linear layer converts the ouput vectors to tag space
-    lstm_feats = self.hidden2tag(lstm_out)
+    lstm_feats = self.hidden2tag(attn_out.squeeze(1))
 
     return lstm_feats
 
@@ -704,7 +709,6 @@ class BiLSTM_CRF(nn.Module):
 
         # Creating Embedding layer with dimension of ( number of words * dimension of each word)
         self.word_embeds = nn.Embedding(vocab_size, embedding_dim)
-        init_embedding(self.word_embeds.weight)
         if pre_word_embeds is not None:
             # Initializes the word embeddings with pretrained word embeddings
             self.pre_word_embeds = True
@@ -726,11 +730,15 @@ class BiLSTM_CRF(nn.Module):
         # Initializing the lstm layer using predefined function for initialization
         init_lstm(self.lstm)
 
+        self.multihead_attn = nn.MultiheadAttention(hidden_dim*2, 8)
+
+#{{{ Hidden to tag
         # Linear layer which maps the output of the bidirectional LSTM into tag space.
         self.hidden2tag = nn.Linear(hidden_dim * 2, self.tagset_size)
 
         # Initializing the linear layer using predefined function for initialization
         init_linear(self.hidden2tag)
+#}}}
 
         if self.use_crf:
             # Matrix of transition parameters.  Entry i,j is the score of transitioning *to* i *from* j.
@@ -750,6 +758,8 @@ class BiLSTM_CRF(nn.Module):
     viterbi_decode = viterbi_algo
     neg_log_likelihood = get_neg_log_likelihood
     forward = forward_calc
+
+
 
 #creating the model using the Class defined above
 model = BiLSTM_CRF(vocab_size=len(word_to_id),
@@ -788,6 +798,7 @@ optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momen
 
 # variables which will used in training process
 losses = []  # list to store all losses
+val_losses = []
 loss = 0.0  # Loss Initializatoin
 best_dev_F = -1.0  # Current best F-1 Score on Dev Set
 best_test_F = -1.0  # Current best F-1 Score on Test Set
@@ -875,6 +886,57 @@ def evaluating(model, datas, best_F, tagset_size, dataset="Train", con_mat=False
 
     return best_F, new_F, save, conf_matrix
 
+def eval_loss(model, datas):
+    count_val = 0
+    loss_val = 0
+    for i, index in enumerate(np.random.permutation(len(datas))):
+        count_val += 1
+        data = datas[index]
+
+        sentence_in = data['words']
+        sentence_in = Variable(torch.LongTensor(sentence_in))
+        tags = data['tags']
+        chars2 = data['chars']
+
+        if parameters['char_mode'] == 'LSTM':
+            chars2_sorted = sorted(chars2, key=lambda p: len(p), reverse=True)
+            d = {}
+            for i, ci in enumerate(chars2):
+                for j, cj in enumerate(chars2_sorted):
+                    if ci == cj and not j in d and not i in d.values():
+                        d[j] = i
+                        continue
+            chars2_length = [len(c) for c in chars2_sorted]
+            char_maxl = max(chars2_length)
+            chars2_mask = np.zeros((len(chars2_sorted), char_maxl), dtype='int')
+            for i, c in enumerate(chars2_sorted):
+                chars2_mask[i, :chars2_length[i]] = c
+            chars2_mask = Variable(torch.LongTensor(chars2_mask))
+
+        if parameters['char_mode'] == 'CNN':
+
+            d = {}
+
+            ## Padding the each word to max word size of that sentence
+            chars2_length = [len(c) for c in chars2]
+            char_maxl = max(chars2_length)
+            chars2_mask = np.zeros((len(chars2_length), char_maxl), dtype='int')
+            for i, c in enumerate(chars2):
+                chars2_mask[i, :chars2_length[i]] = c
+            chars2_mask = Variable(torch.LongTensor(chars2_mask))
+
+        targets = torch.LongTensor(tags)
+
+        # we calculate the negative log-likelihood for the predicted tags using the predefined function
+        if use_gpu:
+            neg_log_likelihood = model.neg_log_likelihood(sentence_in.cuda(), targets.cuda(), chars2_mask.cuda(),
+                                                          chars2_length, d)
+        else:
+            neg_log_likelihood = model.neg_log_likelihood(sentence_in, targets, chars2_mask, chars2_length, d)
+        loss_val += neg_log_likelihood.item() / len(data['words'])
+    loss_val /= len(datas)
+    return loss_val
+
 
 def adjust_learning_rate(optimizer, lr):
     """
@@ -882,6 +944,8 @@ def adjust_learning_rate(optimizer, lr):
     """
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+
 
 
 if parameters['to_train']:
@@ -950,6 +1014,9 @@ if parameters['to_train']:
                     losses.append(loss)
                 losses.append(loss)
                 loss = 0.0
+                model.train(False)
+                val_losses.append(eval_loss(model,dev_data))
+                model.train(True)
 
             # Evaluating on Train, Test, Dev Sets
             if count % (eval_every) == 0 and count > (eval_every * 20) or \
@@ -972,8 +1039,11 @@ if parameters['to_train']:
                 adjust_learning_rate(optimizer, lr=learning_rate / (1 + decay_rate * count / len(train_data)))
 
     print(time.time() - tr)
-    plt.plot(losses)
-    plt.savefig('results/wnut_data_BiLSTM_CRF_pre_trained_embeddings.png')
+    plt.plot(losses,'-r' , label='Training Loss')
+    plt.plot(val_losses,'-b', label='Validation Loss')
+    plt.legend(loc="upper right")
+    plt.title('Wnut Loss BiLSTM-CRF')
+    plt.savefig('results/wnut_loss_curve.png')
     # plt.show()
 
 if not parameters['to_train']:
@@ -985,7 +1055,7 @@ _, _, _, conf_matrix = evaluating(model, test_data, 0, len(tag_to_id), "Test", T
 list_of_labels = list(id_to_tag.values())[:-2]
 list_of_labels.append('Total')
 df_cm = DataFrame(conf_matrix)
-pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/conf_matrix_wnut_BiLSTM_CRF_pre_trained_embeddings.png', cmap= 'Oranges' )
+pretty_plot_confusion_matrix(df_cm, list_of_labels, 'results/wnut_conf_matrix.png', cmap= 'Oranges' )
 
 # parameters
 lower = parameters['lower']
